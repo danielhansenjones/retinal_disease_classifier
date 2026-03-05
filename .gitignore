@@ -1,3 +1,4 @@
 /data/archive/
 /.idea
 /.venv/
+/checkpoints/
