@@ -15,7 +15,7 @@ class Config(BaseSettings):
     # Model
     backbone: str = "efficientnet_b4"
     image_size: int = 448
-    dropout: float = 0.4
+    dropout: float = 0.5
 
     # Training
     batch_size: int = 64
