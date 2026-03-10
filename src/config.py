@@ -22,6 +22,7 @@ class Config(BaseSettings):
     batch_size_finetune: int = 56
     lr_head: float = 1e-3
     lr_finetune: float = 3e-4
+    weight_decay: float = 1e-2
     epochs_frozen: int = 5
     epochs_unfrozen: int = 25
     val_split: float = 0.2

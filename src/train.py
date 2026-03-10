@@ -86,11 +86,12 @@ def train(config: Config):
             "epochs_unfrozen": config.epochs_unfrozen,
             "patience": config.patience,
             "val_split": config.val_split,
+            "weight_decay": config.weight_decay,
         })
 
         # Phase 1 - frozen backbone, train head only
         freeze_backbone(model)
-        optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=config.lr_head)
+        optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=config.lr_head, weight_decay=config.weight_decay)
         train_loader = make_loader(train_ds, config.batch_size, shuffle=True, num_workers=config.num_workers)
         val_loader = make_loader(val_ds, config.batch_size, shuffle=False, num_workers=config.num_workers)
 
@@ -112,7 +113,7 @@ def train(config: Config):
         # Phase 2 - unfreeze all layers, smaller batch to fit full gradients in VRAM
         unfreeze_backbone(model)
         model.enable_grad_checkpointing()
-        optimizer = torch.optim.Adam(model.parameters(), lr=config.lr_finetune)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr_finetune, weight_decay=config.weight_decay)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.epochs_unfrozen)
         train_loader = make_loader(train_ds, config.batch_size_finetune, shuffle=True, num_workers=config.num_workers)
         val_loader = make_loader(val_ds, config.batch_size_finetune, shuffle=False, num_workers=config.num_workers)
