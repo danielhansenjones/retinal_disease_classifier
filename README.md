@@ -2,6 +2,8 @@
 
 Multi-label fundus image classifier for the ODIR-5K dataset, detecting 8 ocular conditions simultaneously from paired left/right eye images.
 
+This project is a ground-up rework of my undergraduate capstone, rebuilt to apply what I've learned since about proper problem framing, training methodology, and experiment tracking. The original version used a softmax classifier on a dataset that is inherently multi-label - a fundamental mismatch. This version corrects that and several other design decisions, and is intended to demonstrate applied ML engineering judgment rather than just model accuracy.
+
 ---
 
 ## Problem Framing
@@ -74,6 +76,13 @@ Best run - EfficientNet-B4, macro-AUC **0.8741**
 | **macro** |              | **0.874** |       |           |        |           |
 
 **Notable:** Myopia (0.995) and Cataract (0.969) have strong visual signatures that the model captures reliably. Hypertension is the hardest class - the fundus signs (arteriovenous nicking, focal arteriolar narrowing) are subtle and only present in ~5% of cases, limiting training signal. Other is a noisy catch-all label by design.
+
+A macro-AUC of **0.874** is competitive with published results on ODIR-5K. Reported scores in the literature and public leaderboards typically range from ~0.85 to ~0.93 for single-model approaches, with the upper end achieved by larger ensembles or models trained on external fundus datasets. This result sits solidly in that range as a single-model, ODIR-5K-only baseline.
+
+**Where more data or compute would help most:**
+- *Hypertension and Other* are the weakest classes. Both suffer from either label noise or low sample counts - more training examples would have a disproportionate impact here versus additional architecture complexity.
+- *Dataset scale* is the primary ceiling. ODIR-5K has ~3,500 usable training images. Models trained on larger public fundus datasets (Messidor, EyePACS, APTOS) then fine-tuned here would likely push past 0.90.
+- *EfficientNet-B5/B6 or ViT-based backbones* would extract richer features but require more VRAM and longer training - not justified at this data scale.
 
 Experiment tracking via MLflow. Three comparable runs logged; each varied optimizer, learning rate, weight decay, and augmentation strength.
 
