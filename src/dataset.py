@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pandas as pd
 from PIL import Image
@@ -7,6 +8,16 @@ from torch.utils.data import Dataset
 from torchvision import transforms
 
 from src.config import Config
+
+# Shared object - parameters are fixed, no state mutated during apply()
+_clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
+
+def apply_clahe(img: Image.Image) -> Image.Image:
+    lab = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2LAB)
+    lab[:, :, 0] = _clahe.apply(lab[:, :, 0])
+    return Image.fromarray(cv2.cvtColor(lab, cv2.COLOR_LAB2RGB))
+
 
 LABEL_COLS = ["N", "D", "G", "C", "A", "H", "M", "O"]
 
@@ -39,8 +50,8 @@ class RetinalDataset(Dataset):
 
     def __getitem__(self, idx):
         row = self.records.iloc[idx]
-        left = Image.open(self.image_dir / row["Left-Fundus"]).convert("RGB")
-        right = Image.open(self.image_dir / row["Right-Fundus"]).convert("RGB")
+        left = apply_clahe(Image.open(self.image_dir / row["Left-Fundus"]).convert("RGB"))
+        right = apply_clahe(Image.open(self.image_dir / row["Right-Fundus"]).convert("RGB"))
         left = self.transform(left)
         right = self.transform(right)
         labels = row[LABEL_COLS].values.astype(np.float32)

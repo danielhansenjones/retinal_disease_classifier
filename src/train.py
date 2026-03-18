@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 
 from src.config import Config
 from src.dataset import RetinalDataset, LABEL_COLS, make_splits, TRAIN_TRANSFORMS, VAL_TRANSFORMS
-from src.evaluate import compute_metrics, tune_thresholds
+from src.evaluate import compute_metrics, run_tta, tune_thresholds
 from src.model import build_model, freeze_backbone, unfreeze_backbone
 
 
@@ -176,7 +176,7 @@ def train(config: Config):
         # Tune thresholds on val set using best model
         ckpt = torch.load(config.checkpoint_dir / "best_model.pt", weights_only=False, map_location=device)
         model.load_state_dict(ckpt["model"])
-        _, y_true, y_prob = run_epoch(model, val_loader, criterion, optimizer, scaler, device, train=False)
+        y_true, y_prob = run_tta(model, val_loader, device)
         thresholds = tune_thresholds(y_true, y_prob, config.labels)
         final_metrics = compute_metrics(y_true, y_prob, thresholds, config.labels)
 
