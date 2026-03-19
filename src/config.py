@@ -1,6 +1,15 @@
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
+
+# Backbones whose pretrained weights expect [-1, 1] input (Inception-style normalization)
+_INCEPTION_NORM: tuple[list[float], list[float]] = ([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+_BACKBONE_NORM: dict[str, tuple[list[float], list[float]]] = {
+    "inception_resnet_v2": _INCEPTION_NORM,
+    "inception_v3": _INCEPTION_NORM,
+    "inception_v4": _INCEPTION_NORM,
+}
 
 
 class Config(BaseSettings):
@@ -16,6 +25,8 @@ class Config(BaseSettings):
     backbone: str = "efficientnet_b4"
     image_size: int = 448
     dropout: float = 0.5
+    norm_mean: list[float] = [0.485, 0.456, 0.406]
+    norm_std: list[float] = [0.229, 0.224, 0.225]
 
     # Training
     batch_size: int = 64
@@ -33,3 +44,11 @@ class Config(BaseSettings):
     num_workers: int = 8
 
     model_config = {"env_file": ".env"}
+
+    @model_validator(mode="after")
+    def _apply_backbone_defaults(self) -> "Config":
+        if "checkpoint_dir" not in self.model_fields_set:
+            self.checkpoint_dir = Path("checkpoints") / self.backbone
+        if self.backbone in _BACKBONE_NORM and "norm_mean" not in self.model_fields_set:
+            self.norm_mean, self.norm_std = _BACKBONE_NORM[self.backbone]
+        return self

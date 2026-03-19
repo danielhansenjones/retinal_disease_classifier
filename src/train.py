@@ -9,7 +9,7 @@ from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 
 from src.config import Config
-from src.dataset import RetinalDataset, LABEL_COLS, make_splits, TRAIN_TRANSFORMS, VAL_TRANSFORMS
+from src.dataset import RetinalDataset, LABEL_COLS, make_splits, make_transforms
 from src.evaluate import compute_metrics, run_tta, tune_thresholds
 from src.model import build_model, freeze_backbone, unfreeze_backbone
 
@@ -62,8 +62,9 @@ def train(config: Config):
     print(f"Using device: {device}")
 
     train_df, val_df = make_splits(config)
-    train_ds = RetinalDataset(train_df, config.image_dir, TRAIN_TRANSFORMS)
-    val_ds = RetinalDataset(val_df, config.image_dir, VAL_TRANSFORMS)
+    train_tf, val_tf = make_transforms(config.norm_mean, config.norm_std, config.image_size)
+    train_ds = RetinalDataset(train_df, config.image_dir, train_tf)
+    val_ds = RetinalDataset(val_df, config.image_dir, val_tf)
 
     model = build_model(config.backbone, len(config.labels), config.dropout).to(device)
     pos_weight = compute_pos_weight(train_df, device)

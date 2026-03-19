@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import timm
 import torch
 import torch.nn as nn
@@ -27,6 +29,56 @@ class DualEyeModel(nn.Module):
 
 def build_model(backbone: str, num_classes: int, dropout: float) -> DualEyeModel:
     return DualEyeModel(backbone, num_classes, dropout)
+
+
+class EnsembleModel(nn.Module):
+    """Averages sigmoid probabilities from multiple DualEyeModels.
+
+    Each model may expect different input normalization. Pass un-normalized
+    float tensors in [0, 1] (Resize + ToTensor only - no Normalize); this
+    class applies per-backbone normalization internally via registered buffers.
+    """
+
+    def __init__(
+        self,
+        models: list[DualEyeModel],
+        norm_means: list[list[float]],
+        norm_stds: list[list[float]],
+    ):
+        super().__init__()
+        self.models = nn.ModuleList(models)
+        for i, (mean, std) in enumerate(zip(norm_means, norm_stds)):
+            self.register_buffer(f"mean_{i}", torch.tensor(mean, dtype=torch.float32).view(3, 1, 1))
+            self.register_buffer(f"std_{i}", torch.tensor(std, dtype=torch.float32).view(3, 1, 1))
+
+    def forward(self, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+        probs = []
+        for i, model in enumerate(self.models):
+            mean = getattr(self, f"mean_{i}")
+            std = getattr(self, f"std_{i}")
+            l_norm = (left - mean) / std
+            r_norm = (right - mean) / std
+            probs.append(torch.sigmoid(model(l_norm, r_norm)))
+        return torch.stack(probs).mean(dim=0)
+
+
+def load_ensemble(
+    checkpoints: list[Path],
+    backbone_names: list[str],
+    norm_means: list[list[float]],
+    norm_stds: list[list[float]],
+    num_classes: int,
+    dropout: float,
+    device: torch.device,
+) -> EnsembleModel:
+    models = []
+    for ckpt_path, backbone in zip(checkpoints, backbone_names):
+        m = build_model(backbone, num_classes, dropout).to(device)
+        ckpt = torch.load(ckpt_path, weights_only=False, map_location=device)
+        m.load_state_dict(ckpt["model"])
+        m.eval()
+        models.append(m)
+    return EnsembleModel(models, norm_means, norm_stds).to(device)
 
 
 def freeze_backbone(model: DualEyeModel):

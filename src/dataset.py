@@ -21,21 +21,36 @@ def apply_clahe(img: Image.Image) -> Image.Image:
 
 LABEL_COLS = ["N", "D", "G", "C", "A", "H", "M", "O"]
 
-TRAIN_TRANSFORMS = transforms.Compose([
-    transforms.RandomResizedCrop(448, scale=(0.8, 1.0)),
-    transforms.RandomHorizontalFlip(),
-    transforms.RandomVerticalFlip(),
-    transforms.RandomRotation(15),
-    transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2, hue=0.05),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
 
-VAL_TRANSFORMS = transforms.Compose([
-    transforms.Resize((448, 448)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
+def make_transforms(
+    norm_mean: list[float],
+    norm_std: list[float],
+    image_size: int,
+) -> tuple[transforms.Compose, transforms.Compose]:
+    normalize = transforms.Normalize(mean=norm_mean, std=norm_std)
+    train_tf = transforms.Compose([
+        transforms.RandomResizedCrop(image_size, scale=(0.8, 1.0)),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomVerticalFlip(),
+        transforms.RandomRotation(15),
+        transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2, hue=0.05),
+        transforms.ToTensor(),
+        normalize,
+    ])
+    val_tf = transforms.Compose([
+        transforms.Resize((image_size, image_size)),
+        transforms.ToTensor(),
+        normalize,
+    ])
+    return train_tf, val_tf
+
+
+def make_raw_val_transform(image_size: int) -> transforms.Compose:
+    """Val transform without normalization - for EnsembleModel which normalizes per-backbone internally."""
+    return transforms.Compose([
+        transforms.Resize((image_size, image_size)),
+        transforms.ToTensor(),
+    ])
 
 
 class RetinalDataset(Dataset):
