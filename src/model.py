@@ -3,6 +3,7 @@ from pathlib import Path
 import timm
 import torch
 import torch.nn as nn
+from torch.utils.checkpoint import checkpoint_sequential
 
 
 class DualEyeModel(nn.Module):
@@ -17,7 +18,29 @@ class DualEyeModel(nn.Module):
         )
 
     def enable_grad_checkpointing(self):
-        self.backbone.set_grad_checkpointing(enable=True)
+        try:
+            self.backbone.set_grad_checkpointing(enable=True)
+        except (AssertionError, AttributeError):
+            # timm doesn't support checkpointing for this backbone - apply it
+            # manually to the repeat blocks which hold the bulk of activations
+            _applied = []
+            for name in ("repeat", "repeat_1", "repeat_2"):
+                block = getattr(self.backbone, name, None)
+                if isinstance(block, nn.Sequential) and len(block) > 1:
+                    original = block.forward
+                    segments = max(1, len(block) // 2)
+
+                    def make_checkpointed(seq, n):
+                        def forward(x):
+                            return checkpoint_sequential(seq, n, x, use_reentrant=False)
+                        return forward
+
+                    block.forward = make_checkpointed(block, segments)
+                    _applied.append(name)
+            if _applied:
+                print(f"Applied manual gradient checkpointing to: {', '.join(_applied)}")
+            else:
+                print("Warning: grad checkpointing not supported and no repeat blocks found - running without it")
 
     def forward(self, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
         # Process both eyes in a single backbone pass - avoids sequential GPU idle time
