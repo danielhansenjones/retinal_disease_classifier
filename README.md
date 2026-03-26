@@ -196,7 +196,7 @@ Getting this wrong shifts the activation distribution at the input and degrades 
 
 ---
 
-### What we'd do differently
+### What could be done differently
 
 **CLAHE is unconfirmed although used in the literature.**
 Adding CLAHE coincided with a regression in the EfficientNet-B4 run (0.874 → 0.870).
