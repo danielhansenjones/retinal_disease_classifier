@@ -1,107 +1,156 @@
 # Retinal Disease Classifier
 
-Multi-label fundus image classifier for the ODIR-5K dataset, detecting 8 ocular conditions simultaneously from paired left/right eye images.
+Multi-label classifier for the ODIR-5K fundus dataset.
+Detects 8 ocular conditions from paired left/right eye images using a dual-backbone ensemble with per-backbone normalization, CLAHE preprocessing, and test-time augmentation.
 
-This project is a ground-up rework of my undergraduate capstone, rebuilt to apply what I've learned since about proper problem framing, training methodology, and experiment tracking. The original version used a softmax classifier on a dataset that is inherently multi-label - a fundamental mismatch. This version corrects that and several other design decisions, and is intended to demonstrate applied ML engineering judgment rather than just model accuracy.
+Rebuilt from a university capstone.
+The original used softmax on a multi-label dataset - a fundamental framing error.
+This version fixes that and a number of other decisions that quietly hurt the original's results.
 
 ---
 
-## Problem Framing
+## The Core Problem With Most Approaches to This Dataset
 
-Standard approaches to this dataset apply a softmax classifier - treating it as single-label, mutually exclusive classification. That framing is wrong. Patients frequently present with multiple simultaneous conditions (e.g. Diabetes + Hypertension), and softmax produces contradictory gradient signals when that happens.
+The majority of public notebooks on ODIR-5K use `CrossEntropyLoss` with softmax.
+That's wrong.
+Patients routinely present with multiple simultaneous conditions - Diabetes and Hypertension together, for instance - and softmax forces the probabilities to sum to 1, which produces contradictory gradients when multiple labels are true.
 
-This project reframes it correctly as **multi-label classification**:
+This is framed as multi-label from the ground up:
 
-| Approach | Loss | Activation | Problem |
-|----------|------|------------|---------|
-| Single-label (naive) | CrossEntropyLoss | Softmax | Forces probabilities to sum to 1, penalises co-occurring labels |
-| Multi-label (correct) | BCEWithLogitsLoss | Sigmoid | Independent binary decision per class, handles co-occurrence correctly |
+|                   | Loss              | Output                | Why                             |
+|-------------------|-------------------|-----------------------|---------------------------------|
+| Softmax (wrong)   | CrossEntropyLoss  | Mutually exclusive    | Penalises co-occurring labels   |
+| Sigmoid (correct) | BCEWithLogitsLoss | Independent per class | Handles co-occurrence correctly |
 
 ---
 
 ## Architecture
 
-**Backbone:** EfficientNet-B4 via `timm` (pretrained on ImageNet)
+### Dual-eye fusion
 
-**Dual-eye fusion:** Both left and right fundus images are passed through the same shared backbone in a single forward pass, features are concatenated, then classified jointly. Some conditions manifest differently or asymmetrically across eyes.
+A single shared backbone processes both eyes in one forward pass.
+Features from each eye are concatenated before the classification head.
+This matters for conditions like Hypertension and AMD that can be asymmetric - the model sees both eyes at decision time.
 
 ```
-left_image  ──┐
-               ├── EfficientNet-B4 (shared) ──> concat ──> Dropout(0.5) ──> Linear(features*2, 8)
-right_image ──┘
+left  ──┐
+         ├── Backbone (shared) ──> concat ──> Dropout(0.5) ──> Linear(features*2, 8)
+right ──┘
 ```
 
-**Head:** Single linear layer on concatenated left+right features. No sigmoid at training time - `BCEWithLogitsLoss` expects raw logits.
+### Two backbones, trained independently
 
-**Class imbalance:** Per-class `pos_weight = neg / pos` computed from training set and passed to the loss function. Prevents the Normal class (~49% prevalence) from dominating.
+| Backbone            | Params | Feature dim | Input normalization              |
+|---------------------|--------|-------------|----------------------------------|
+| EfficientNet-B4     | 19M    | 1792        | ImageNet μ=(0.485, 0.456, 0.406) |
+| Inception-ResNet-v2 | 55M    | 1536        | Inception μ=(0.5, 0.5, 0.5)      |
+
+Inception-family pretrained weights expect inputs in [-1, 1].
+Using ImageNet normalization with them isn't a minor detail - it shifts the activation distribution the pretrained features were built on, which matters most during the frozen warm-up phase when the head is calibrating to backbone output.
+
+### Ensemble
+
+Both models are loaded simultaneously at inference.
+Each normalizes its own inputs internally, so there's a single data-loading path regardless of backbone.
+Sigmoid probabilities are averaged across both models and all TTA views.
+
+---
+
+## Preprocessing
+
+CLAHE is applied to every image before augmentation, on both train and val sets.
+It runs on the L channel of LAB - not per-channel in RGB, which would shift white balance and produce colour casts.
+This enhances local contrast for vessel and lesion visibility without touching hue or saturation.
+
+- `clipLimit=2.0` - standard for fundus imaging; higher values amplify noise in dark retinal regions
+- `tileGridSize=(8, 8)` - at 448×448, gives 56×56px tiles, right-sized for optic disc and macula variation
 
 ---
 
 ## Training
 
-Two-phase strategy to preserve pretrained features:
+**Phase 1 - head only, 5 epochs, LR 1e-3**
+Backbone frozen.
+Gets the head to a reasonable starting point before touching pretrained weights.
 
-**Phase 1 - Frozen backbone (5 epochs)**
-Only the classification head is trained. High LR (1e-3) lets the head converge before touching the pretrained weights.
+**Phase 2 - full fine-tune, up to 25 epochs, LR 1e-4**
+Cosine annealing, early stopping on val AUC (patience=7).
+Gradient checkpointing on EfficientNet-B4 via timm's API; applied manually to the Inception-ResNet-v2 repeat blocks, which don't expose a checkpointing interface.
 
-**Phase 2 - Full fine-tune (up to 25 epochs)**
-All layers unfrozen. Low LR (1e-4) with cosine annealing. Gradient checkpointing enabled to reduce VRAM usage. Early stopping on val AUC (patience=7).
+**Optimizer:** AdamW, weight decay 1e-3
 
-**Optimiser:** AdamW with weight decay 1e-3
+**Augmentation (train only):** RandomResizedCrop(448, scale=0.8–1.0), HorizontalFlip, VerticalFlip, Rotation(15°), ColorJitter
 
-**Augmentation:**
-- RandomResizedCrop(448, scale=0.8–1.0)
-- RandomHorizontalFlip, RandomVerticalFlip
-- RandomRotation(15°)
-- ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2, hue=0.05)
+**Class imbalance:** Per-class `pos_weight = neg/pos` from the training set, passed directly to BCEWithLogitsLoss.
 
-**Threshold tuning:** After training, per-class decision thresholds are swept on the validation set and selected to maximise F1. A single 0.5 threshold applied universally is clinically inappropriate - missing diabetic retinopathy has different consequences than a false positive on myopia.
+**Threshold tuning:** Decision thresholds are optimized per class on the val set to maximize F1.
+A fixed 0.5 cutoff applied uniformly ignores the fact that the cost of a missed Glaucoma diagnosis is not the same as a missed Myopia diagnosis.
+
+**TTA:** Four deterministic views at inference - original, horizontal flip, vertical flip, 90° rotation.
+Fundus images have no meaningful orientation, so all four are valid.
+Probabilities are averaged before thresholding.
 
 ---
 
 ## Results
 
-Best run - EfficientNet-B4, macro-AUC **0.8741**
+| Model               | macro-AUC |
+|---------------------|-----------|
+| EfficientNet-B4     | 0.870     |
+| Inception-ResNet-v2 | 0.885     |
+| **Ensemble + TTA**  | **0.888** |
+
+The ensemble gains most in the low-prevalence classes (A, H, O) where single-model predictions are noisiest.
+The two backbones make partially uncorrelated errors - EfficientNet's compound-scaled convolutions vs. Inception-ResNet's mixed-kernel residual blocks - which is what makes averaging useful.
+
+**Ensemble + TTA - per-class breakdown**
 
 | Class     | Condition    | AUC       | F1    | Precision | Recall | Threshold |
 |-----------|--------------|-----------|-------|-----------|--------|-----------|
-| N         | Normal       | 0.786     | 0.635 | 0.504     | 0.859  | 0.375     |
-| D         | Diabetes     | 0.832     | 0.676 | 0.611     | 0.758  | 0.339     |
-| G         | Glaucoma     | 0.946     | 0.597 | 0.529     | 0.684  | 0.545     |
-| C         | Cataract     | 0.969     | 0.871 | 0.934     | 0.816  | 0.526     |
-| A         | AMD          | 0.931     | 0.640 | 0.870     | 0.506  | 0.979     |
-| H         | Hypertension | 0.823     | 0.273 | 0.273     | 0.273  | 0.449     |
-| M         | Myopia       | 0.995     | 0.874 | 0.929     | 0.825  | 0.353     |
-| O         | Other        | 0.711     | 0.482 | 0.432     | 0.545  | 0.421     |
-| **macro** |              | **0.874** |       |           |        |           |
+| N         | Normal       | 0.821     | 0.659 | 0.595     | 0.739  | 0.453     |
+| D         | Diabetes     | 0.860     | 0.717 | 0.764     | 0.674  | 0.596     |
+| G         | Glaucoma     | 0.959     | 0.649 | 0.667     | 0.633  | 0.714     |
+| C         | Cataract     | 0.980     | 0.857 | 0.852     | 0.862  | 0.752     |
+| A         | AMD          | 0.938     | 0.659 | 0.635     | 0.684  | 0.511     |
+| H         | Hypertension | 0.816     | 0.306 | 0.220     | 0.500  | 0.330     |
+| M         | Myopia       | 0.996     | 0.889 | 0.889     | 0.889  | 0.540     |
+| O         | Other        | 0.737     | 0.518 | 0.491     | 0.548  | 0.513     |
+| **macro** |              | **0.888** |       |           |        |           |
 
-**Notable:** Myopia (0.995) and Cataract (0.969) have strong visual signatures that the model captures reliably. Hypertension is the hardest class - the fundus signs (arteriovenous nicking, focal arteriolar narrowing) are subtle and only present in ~5% of cases, limiting training signal. Other is a noisy catch-all label by design.
+Myopia and Glaucoma are strong - distinctive visual signatures, clean labels.
+Hypertension is the problem class across the board: subtle signs (arteriovenous nicking, focal arteriolar narrowing), ~5% prevalence, and limited positive examples.
+Other is a noisy catch-all; its ceiling is a labeling problem, not a modeling one.
 
-A macro-AUC of **0.874** is competitive with published results on ODIR-5K. Reported scores in the literature and public leaderboards typically range from ~0.85 to ~0.93 for single-model approaches, with the upper end achieved by larger ensembles or models trained on external fundus datasets. This result sits solidly in that range as a single-model, ODIR-5K-only baseline.
-
-**Where more data or compute would help most:**
-- *Hypertension and Other* are the weakest classes. Both suffer from either label noise or low sample counts - more training examples would have a disproportionate impact here versus additional architecture complexity.
-- *Dataset scale* is the primary ceiling. ODIR-5K has ~3,500 usable training images. Models trained on larger public fundus datasets (Messidor, EyePACS, APTOS) then fine-tuned here would likely push past 0.90.
-- *EfficientNet-B5/B6 or ViT-based backbones* would extract richer features but require more VRAM and longer training - not justified at this data scale.
-
-Experiment tracking via MLflow. Three comparable runs logged; each varied optimizer, learning rate, weight decay, and augmentation strength.
+The gap to the top of the published range (~0.93) is not an architecture problem.
+It's a data problem.
+The teams hitting 0.93 are pre-training on EyePACS, MESSIDOR, or APTOS before touching ODIR-5K.
+At 3,500 training images with the current label quality, the two classes that would need to move most (H and O) don't have enough signal to get there regardless of what sits on top.
 
 ---
 
 ## How to Run
 
 ```bash
-# Install dependencies
 uv sync
-
-# Train (results logged to mlruns/)
 python main.py
-
-# View experiment tracking UI
-mlflow ui
 ```
 
-Requires ODIR-5K dataset placed at `data/archive/`. Available on [Kaggle](https://www.kaggle.com/datasets/andrewmvd/ocular-disease-recognition-odir5k).
+```
+Select an option:
+  1) Train EfficientNet-B4
+  2) Train Inception-ResNet-v2
+  3) Evaluate ensemble (both checkpoints must exist)
+  4) Exit
+```
+
+Checkpoints saved to `checkpoints/<backbone>/best_model.pt`.
+Option 3 runs full ensemble inference with TTA and prints per-class metrics.
+
+```bash
+mlflow ui   # experiment tracking
+```
+
+Dataset: ODIR-5K placed at `data/archive/`. Available on [Kaggle](https://www.kaggle.com/datasets/andrewmvd/ocular-disease-recognition-odir5k).
 
 ---
 
@@ -111,19 +160,66 @@ Requires ODIR-5K dataset placed at `data/archive/`. Available on [Kaggle](https:
 |-------|-----------------------------------------------------------|--------|
 | 1     | Data pipeline, model, training loop, per-class evaluation | Done   |
 | 2     | MLflow experiment tracking, model registry                | Done   |
+| 3     | CLAHE preprocessing, dual-backbone ensemble, TTA          | Done   |
 
 ---
 
-## Key Design Decisions
+## Design Decisions
 
-**Why BCEWithLogitsLoss over CrossEntropyLoss?**
-Multi-label problem. Each class is an independent binary decision. CrossEntropyLoss assumes exactly one correct class.
+### What worked
 
-**Why per-class threshold tuning?**
-The optimal decision threshold varies by class and by the relative cost of false negatives vs false positives. A model that flags Glaucoma conservatively is preferable to one that misses it.
+**Multi-label framing.**
+The most consequential correctness fix in the whole project.
+BCEWithLogitsLoss with independent sigmoid outputs is the only sensible choice for this dataset.
+Softmax co-occurrence penalty isn't a subtle bias - it actively fights the gradient signal on patients with multiple conditions, which is a significant portion of ODIR-5K.
 
-**Why dual-eye input?**
-Conditions like Hypertension and AMD can manifest asymmetrically. Giving the model both eyes at classification time lets it reason over the pair jointly rather than treating each image independently.
+**Dual-eye input.**
+Processing both fundus images jointly rather than independently gives the model access to inter-eye asymmetry, which is a real diagnostic signal for Hypertension and AMD.
+The shared backbone with concatenated features also avoids running two separate forward passes, so there's no VRAM penalty for the dual-eye design.
 
-**Why two-phase training?**
-Fine-tuning all layers from the start with a high LR degrades pretrained ImageNet features. Warming up the head first stabilises training and consistently produces better final AUC.
+**Two-phase training.**
+Freezing the backbone for the first few epochs consistently produces better final AUC than end-to-end training from scratch.
+Pretrained ImageNet features are worth preserving - a high-LR head run in epoch 1 will degrade them before the backbone has any chance to adapt.
+
+**Per-class threshold tuning.**
+Sweeping thresholds per class on the val set and selecting by F1 is correct for an imbalanced multi-label problem.
+A fixed 0.5 threshold assumes balanced classes and symmetric false positive / false negative costs.
+Neither is true here.
+
+**Heterogeneous ensemble.**
+Pairing EfficientNet-B4 with Inception-ResNet-v2 produces real diversity - compound-scaled convolutions vs. mixed-kernel residual blocks generate partially uncorrelated errors.
+Two copies of the same backbone would add compute for minimal variance reduction.
+
+**Correct per-backbone normalization.**
+Inception-family pretrained weights expect inputs in [-1, 1], not ImageNet statistics.
+Getting this wrong shifts the activation distribution at the input and degrades how much signal you recover from pretraining, particularly during Phase 1 when the backbone is frozen and the head is adapting to its output.
+
+---
+
+### What we'd do differently
+
+**CLAHE is unconfirmed although used in the literature.**
+Adding CLAHE coincided with a regression in the EfficientNet-B4 run (0.874 → 0.870).
+Run-to-run variance on a small val set makes it hard to isolate, but CLAHE may be hurting the Normal class by amplifying subtle variations in healthy images that can resemble early pathology.
+
+
+**Two models are not enough.**
+Averaging two models reduces variance, but the gains flatten quickly.
+Teams hitting 0.93+ on this dataset typically run 5–10 model ensembles.
+With two, any systematic bias shared between the architectures is still fully present in the final output.
+
+**The val set is too small to trust individual runs.**
+At ~700 patients and 80/20 split, per-class sample counts for rare conditions are in the dozens.
+AUC estimates at that scale have wide confidence intervals - a 0.003 swing between runs is noise.
+K-fold cross-validation would give a more reliable picture of actual generalization, at the cost of significantly more training time.
+
+**Hypertension (H) is unsolved.**
+AUC 0.816, F1 0.306.
+The model can rank H cases but can't make reliable binary predictions on them.
+~5% prevalence in a 3,500-image dataset means fewer than 200 positive training examples.
+No architecture change fixes that - it's a data volume problem.
+
+**Pretrained retinal weights are the right next investment.**
+The step from 0.888 to the 0.93+ range requires starting from features trained on fundus images, not ImageNet.
+Models pretrained on EyePACS or APTOS understand haemorrhages, exudates, and vessel structure in a way ImageNet pretraining doesn't transfer.
+More ensembles or augmentation tuning won't close that gap.
