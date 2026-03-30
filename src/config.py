@@ -7,8 +7,6 @@ from pydantic_settings import BaseSettings
 _INCEPTION_NORM: tuple[list[float], list[float]] = ([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
 _BACKBONE_NORM: dict[str, tuple[list[float], list[float]]] = {
     "inception_resnet_v2": _INCEPTION_NORM,
-    "inception_v3": _INCEPTION_NORM,
-    "inception_v4": _INCEPTION_NORM,
 }
 
 

@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 
 from src.config import Config
 from src.dataset import RetinalDataset, make_raw_val_transform, make_splits
-from src.evaluate import compute_metrics, tune_thresholds
+from src.evaluate import TTA_AUGMENTS, compute_metrics, tune_thresholds
 from src.model import load_ensemble
 from src.train import train
 
@@ -46,20 +46,13 @@ def run_ensemble():
         device=device,
     )
 
-    _tta_augments = [
-        lambda t: t,
-        lambda t: torch.flip(t, dims=[-1]),
-        lambda t: torch.flip(t, dims=[-2]),
-        lambda t: torch.rot90(t, k=1, dims=[-2, -1]),
-    ]
-
     print("Running inference with TTA (4 views x 2 models)...")
     all_probs, all_labels = [], []
     with torch.no_grad():
         for left, right, labels in val_loader:
             left, right = left.to(device), right.to(device)
             pass_probs = []
-            for aug in _tta_augments:
+            for aug in TTA_AUGMENTS:
                 # EnsembleModel already returns sigmoid-averaged probs - no sigmoid here
                 pass_probs.append(ensemble(aug(left), aug(right)).cpu().numpy())
             all_probs.append(np.mean(pass_probs, axis=0))

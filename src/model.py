@@ -50,10 +50,6 @@ class DualEyeModel(nn.Module):
         return self.classifier(torch.cat([left_feat, right_feat], dim=1))
 
 
-def build_model(backbone: str, num_classes: int, dropout: float) -> DualEyeModel:
-    return DualEyeModel(backbone, num_classes, dropout)
-
-
 class EnsembleModel(nn.Module):
     """Averages sigmoid probabilities from multiple DualEyeModels.
 
@@ -96,7 +92,7 @@ def load_ensemble(
 ) -> EnsembleModel:
     models = []
     for ckpt_path, backbone in zip(checkpoints, backbone_names):
-        m = build_model(backbone, num_classes, dropout).to(device)
+        m = DualEyeModel(backbone, num_classes, dropout).to(device)
         ckpt = torch.load(ckpt_path, weights_only=False, map_location=device)
         m.load_state_dict(ckpt["model"])
         m.eval()
