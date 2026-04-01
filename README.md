@@ -152,6 +152,37 @@ mlflow ui   # experiment tracking
 
 Dataset: ODIR-5K placed at `data/archive/`. Available on [Kaggle](https://www.kaggle.com/datasets/andrewmvd/ocular-disease-recognition-odir5k).
 
+### Inference API
+
+The ensemble is served via FastAPI. Both backbone checkpoints and the ensemble threshold file must exist before the server will start.
+
+```bash
+# Generate ensemble thresholds (option 3 in main.py, only needed once)
+python main.py
+
+# Start the server
+uvicorn src.api:app
+```
+
+```bash
+curl -X POST http://localhost:8000/predict \
+  -F left=@/path/to/left_fundus.jpg \
+  -F right=@/path/to/right_fundus.jpg
+```
+
+Returns per-class probabilities and thresholded binary predictions:
+
+```json
+{
+  "probabilities": {"N": 0.87, "D": 0.04, "G": 0.12, "C": 0.01, "A": 0.03, "H": 0.08, "M": 0.0, "O": 0.15},
+  "predictions":   {"N": true, "D": false, "G": false, "C": false, "A": false, "H": false, "M": false, "O": false}
+}
+```
+
+TTA is on by default (4 views averaged). Pass `?tta=false` to skip it - roughly 4x faster, slightly less accurate.
+
+The preprocessing pipeline matches training exactly: CLAHE on the L channel, resize to 448×448, then the ensemble handles per-backbone normalization internally.
+
 ---
 
 ## Project Status

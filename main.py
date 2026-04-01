@@ -62,6 +62,7 @@ def run_ensemble():
     y_true = np.concatenate(all_labels)
 
     thresholds = tune_thresholds(y_true, y_prob, config.labels)
+    np.save(Path("checkpoints/ensemble_thresholds.npy"), thresholds)
     metrics = compute_metrics(y_true, y_prob, thresholds, config.labels)
 
     print("\n--- Ensemble results (tuned thresholds) ---")
