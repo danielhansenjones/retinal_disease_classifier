@@ -1,0 +1,11 @@
+.venv
+.git
+.idea
+__pycache__
+*.pyc
+data
+checkpoints
+mlruns
+mlflow.db
+notebooks
+.pytest_cache
