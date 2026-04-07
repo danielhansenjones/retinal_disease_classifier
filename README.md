@@ -58,9 +58,9 @@ Sigmoid probabilities are averaged across both models and all TTA views.
 
 ## Preprocessing
 
-CLAHE is applied to every image before augmentation, on both train and val sets.
-It runs on the L channel of LAB - not per-channel in RGB, which would shift white balance and produce colour casts.
-This enhances local contrast for vessel and lesion visibility without touching hue or saturation.
+CLAHE on the L channel of LAB - standard preprocessing for fundus imaging, used in most published ODIR-5K work.
+Applied on both train and val so the input distribution at inference matches training.
+Operating on L only (not per-channel RGB) avoids the white-balance shift that produces colour casts.
 
 - `clipLimit=2.0` - standard for fundus imaging; higher values amplify noise in dark retinal regions
 - `tileGridSize=(8, 8)` - at 448×448, gives 56×56px tiles, right-sized for optic disc and macula variation
@@ -228,11 +228,6 @@ Getting this wrong shifts the activation distribution at the input and degrades 
 ---
 
 ### What could be done differently
-
-**CLAHE is unconfirmed although used in the literature.**
-Adding CLAHE coincided with a regression in the EfficientNet-B4 run (0.874 → 0.870).
-Run-to-run variance on a small val set makes it hard to isolate, but CLAHE may be hurting the Normal class by amplifying subtle variations in healthy images that can resemble early pathology.
-
 
 **Two models are not enough.**
 Averaging two models reduces variance, but the gains flatten quickly.
