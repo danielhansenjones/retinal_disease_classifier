@@ -185,6 +185,20 @@ The preprocessing pipeline matches training exactly: CLAHE on the L channel, res
 
 ---
 
+## Limitations
+
+This is a portfolio project, not a medical device. It has not been clinically validated and must not be used to make or inform a diagnosis.
+
+**Training-data coverage.** Trained on ODIR-5K only - a single-source dataset with ~3,500 patients and a small number of clinical sites with similar acquisition equipment. Performance on fundus images from different cameras, lighting conditions, or patient populations is unmeasured and likely worse.
+
+**Hypertension is a data-volume problem.** AUC 0.816, F1 0.306. The model ranks H cases reasonably, but binary predictions are unreliable. At ~5% prevalence in 3,500 images, there are fewer than 200 positive training examples. No architecture change fixes that.
+
+**"Other" is a labeling problem.** O is a catch-all for conditions outside the first seven classes. Its ceiling is the label noise, not the model.
+
+**No demographic stratification.** ODIR-5K does not provide consistent demographic metadata, so per-subgroup performance (age, sex, ethnicity) is not evaluated. This is a meaningful blind spot for any medical imaging model.
+
+---
+
 ## Project Status
 
 | Phase | Description                                               | Status |
