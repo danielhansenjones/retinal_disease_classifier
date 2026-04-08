@@ -185,6 +185,26 @@ The preprocessing pipeline matches training exactly: CLAHE on the L channel, res
 
 ---
 
+## Failure Analysis
+
+`scripts/failure_analysis.py` runs the ensemble over the val split and saves the top-N highest-confidence false positives and false negatives per class to `analysis/failures/<label>_fp.png` and `<label>_fn.png`, with a draft `summary.md` listing each composite.
+
+```bash
+uv run python scripts/failure_analysis.py            # default: top 4 per class, TTA on
+uv run python scripts/failure_analysis.py --top-n 6 --no-tta
+```
+
+What the metrics already tell you, before opening any image:
+
+- **Hypertension (AUC 0.816, F1 0.306).** The model can rank H cases reasonably well but cannot put a useful threshold on them. Expect false positives that look mildly abnormal (vessel tortuosity, age-related changes) and false negatives in mild cases where the only sign is subtle arteriovenous nicking. ~5% prevalence and ~200 positive training examples is the binding constraint.
+- **Other (AUC 0.737).** O is a labeling catch-all. Expect FPs that are genuinely abnormal but not in any of the seven specific classes, and FNs that the model handles correctly under a different label that happens to be present.
+- **Normal (AUC 0.821).** The lowest specific-class AUC. Expect FPs where pathological images get tagged as Normal because the dominant signal is "not obviously diseased", and FNs where mild Diabetes or Hypertension changes are present alongside an N=1 label.
+- **Glaucoma, Cataract, Myopia (AUC 0.96-1.00).** Failures here are rare and worth inspecting individually - usually image-quality issues (overexposure, off-center fovea) or unusual presentations.
+
+Per-class image composites and one-line hypotheses live in `analysis/failures/summary.md` after running the script.
+
+---
+
 ## Limitations
 
 This is a portfolio project, not a medical device. It has not been clinically validated and must not be used to make or inform a diagnosis.
